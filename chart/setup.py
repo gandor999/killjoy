@@ -1,62 +1,15 @@
 import matplotlib.pyplot as plt
 
+from chart.classes.BlittedCrosshairWithOverlay import BlittedCrosshairWithOverlay
+from constants.constants_theme import DATE_FORMAT, GENERAL_FONT_WEIGHT
+
 
 def setup_crosshair_tool(ax):
     """
     Creates and attaches an interactive crosshair and data box
     tracking system that directly tracks the mouse coordinates.
     """
-    # Create the crosshair line elements (hidden by default)
-    v_line = ax.axvline(color="gray", linestyle="--", linewidth=1, visible=False)
-    h_line = ax.axhline(color="gray", linestyle="--", linewidth=1, visible=False)
-
-    # Create a persistent text box in the upper-left corner of the plot area
-    pointer_text = ax.text(
-        0.125,
-        0.88,
-        "",  # 0.125 aligns perfectly with the left edge of the chart
-        transform=plt.gcf().transFigure,  # <--- Change transAxes to transFigure
-        fontsize=11,
-        fontweight="bold",
-        bbox=dict(boxstyle="round,pad=0.5", fc="black", alpha=0.75),
-        color="white",
-        verticalalignment="bottom",  # Aligns upward from the baseline coordinate
-        zorder=5,
-    )
-
-    def on_mouse_move(event):
-        if event.inaxes == ax and event.xdata is not None and event.ydata is not None:
-            x_mouse, y_mouse = event.xdata, event.ydata
-
-            try:
-                mouse_dt = plt.matplotlib.dates.num2date(x_mouse)
-                date_str = mouse_dt.strftime("%d/%m/%y %I:%M:%S %p")
-                val_str = f"{y_mouse:.2f}"
-
-                # Position crosshair lines exactly at the mouse position
-                v_line.set_xdata([x_mouse])
-                h_line.set_ydata([y_mouse])
-                v_line.set_visible(True)
-                h_line.set_visible(True)
-
-                # Update the overlay text content
-                pointer_text.set_text(f"📍 Date: {date_str}\n📈 Index: {val_str}")
-                pointer_text.set_visible(True)
-
-            except (ValueError, OverflowError):
-                v_line.set_visible(False)
-                h_line.set_visible(False)
-                pointer_text.set_visible(False)
-
-            plt.gcf().canvas.draw_idle()
-        else:
-            if v_line.get_visible():
-                v_line.set_visible(False)
-                h_line.set_visible(False)
-                pointer_text.set_visible(False)
-                plt.gcf().canvas.draw_idle()
-
-    plt.gcf().canvas.mpl_connect("motion_notify_event", on_mouse_move)
+    ax.crosshair = BlittedCrosshairWithOverlay(ax)
 
 
 def setup_status_bar_formatter(ax):
@@ -68,7 +21,7 @@ def setup_status_bar_formatter(ax):
     def format_coord(x, y):
         try:
             dt_obj = plt.matplotlib.dates.num2date(x)
-            date_str = dt_obj.strftime("%d/%m/%y %I:%M:%S %p")
+            date_str = dt_obj.strftime(DATE_FORMAT)
             return f"x = {date_str}, y = {y:.2f}"
         except (ValueError, OverflowError):
             return f"x = {x:.2f}, y = {y:.2f}"
@@ -79,10 +32,16 @@ def setup_status_bar_formatter(ax):
 def setup_scroll_zoom(ax):
     """
     Enables dynamic zooming in and out using the mouse scroll wheel.
+    Hides the blitted crosshair during updates to prevent clipping ghosts.
     """
 
     def zoom_on_scroll(event):
         if event.inaxes == ax:
+            # 1. HIDE THE CROSSHAIR INSTANTLY BEFORE RESIZING
+            # This wipes the overlay and lines off the old background canvas cache
+            if hasattr(ax, "crosshair"):
+                ax.crosshair.hide_crosshair()
+
             # Check zoom direction (up or down)
             base_scale = 1.2 if event.button == "down" else 0.8
 
@@ -108,6 +67,8 @@ def setup_scroll_zoom(ax):
                 [y_mouse - new_height * (1 - rel_y), y_mouse + new_height * rel_y]
             )
 
+            # Redraw window frame (this fires the crosshair's on_draw event,
+            # updating its internal background cache to the newly zoomed view)
             plt.gcf().canvas.draw_idle()
 
     # Bind the wheel scrolling listener to the Matplotlib window framework
@@ -117,7 +78,7 @@ def setup_scroll_zoom(ax):
 def setup_right_click_pan(ax):
     """
     Enables 100% smooth, pixel-perfect panning by dragging with the
-    right mouse button. Eliminates all jitter.
+    right mouse button. Eliminates all jitter. Returns the state dict.
     """
     pan_state = {
         "is_panning": False,
@@ -130,7 +91,6 @@ def setup_right_click_pan(ax):
     def on_press(event):
         if event.button == 3 and event.inaxes == ax:
             pan_state["is_panning"] = True
-            # Store raw screen pixel locations
             pan_state["start_pixel_x"] = event.x
             pan_state["start_pixel_y"] = event.y
             pan_state["start_xlim"] = ax.get_xlim()
@@ -138,12 +98,9 @@ def setup_right_click_pan(ax):
 
     def on_motion(event):
         if pan_state["is_panning"] and event.inaxes == ax:
-            # Get the exact distance moved in raw pixels
             pixel_dx = event.x - pan_state["start_pixel_x"]
             pixel_dy = event.y - pan_state["start_pixel_y"]
 
-            # Convert that pixel distance into exact chart scale equivalents
-            # This stops the scaling values from fighting the cursor
             trans = ax.transData.inverted()
             start_data_coord = trans.transform(
                 (pan_state["start_pixel_x"], pan_state["start_pixel_y"])
@@ -153,7 +110,6 @@ def setup_right_click_pan(ax):
             dx = current_data_coord[0] - start_data_coord[0]
             dy = current_data_coord[1] - start_data_coord[1]
 
-            # Apply the stable shifts
             new_xlim = [val - dx for val in pan_state["start_xlim"]]
             new_ylim = [val - dy for val in pan_state["start_ylim"]]
 
@@ -168,3 +124,26 @@ def setup_right_click_pan(ax):
     plt.gcf().canvas.mpl_connect("button_press_event", on_press)
     plt.gcf().canvas.mpl_connect("motion_notify_event", on_motion)
     plt.gcf().canvas.mpl_connect("button_release_event", on_release)
+
+    return pan_state  # <--- CRITICAL: Pass the state dictionary out of the function
+
+
+def setup_interactive_tools(ax):
+    """
+    Initializes both tracking crosshairs and right-click panning,
+    sharing state so they cleanly toggle each other off when active.
+    """
+    # 1. Create a single master state dictionary
+    shared_pan_state = {
+        "is_panning": False,
+        "start_pixel_x": None,
+        "start_pixel_y": None,
+        "start_xlim": None,
+        "start_ylim": None,
+    }
+
+    # 2. Hook up right-click panning using the shared state
+    setup_right_click_pan(ax, shared_pan_state)
+
+    # 3. Hook up crosshairs, letting it watch the pan state directly
+    ax.crosshair = BlittedCrosshairWithOverlay(ax, pan_state=shared_pan_state)
