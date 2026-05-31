@@ -50,14 +50,116 @@ def generate_custom_index_chart(
     plt.show()
 
 
+def refresh_index_chart(ax, tickers, start_date, end_date):
+    """
+    Standalone global function managing the complete chart re-render pipeline.
+    Re-downloads data, recalculates live index returns, shifts crosshair event maps,
+    and redraws widget overlays.
+    """
+    fig = ax.figure
+    ax.clear()
+
+    # 1. Gracefully handle an empty asset pool scenario
+    if not tickers:
+        ax.set_title("No Assets Selected", color="red", fontsize=12, fontstyle="italic")
+        ax.grid(True, linestyle="--", alpha=0.5)
+        if hasattr(ax, "footer") and ax.footer:
+            ax.footer.render_ui()
+        fig.canvas.draw_idle()
+        return
+
+    try:
+        # 2. Re-download and rebuild normalized index matrix
+        print(f"Updating data matrix for tickers: {tickers}...")
+        data = yf.download(tickers, start=start_date, end=end_date, progress=False)[
+            "Close"
+        ]
+        data = data.dropna(how="all")
+
+        normalized_data = data / data.bfill().iloc[0]
+        current_index_data = normalized_data.mean(axis=1) * 100
+
+        # 3. Calculate true up-to-date metrics and dynamic UI theme settings
+        updated_ytd_roi = calculate_ytd_roi(current_index_data)
+        live_theme = get_roi_theme(updated_ytd_roi)
+
+        # 4. Render main historical line performance plot curve
+        ax.plot(
+            current_index_data,
+            color=CHART_INDEX_COLOR,
+            linewidth=2.5,
+            label=f"{INDEX_TITLE} ({live_theme['text']})",
+        )
+        ax.set_xlim(current_index_data.index[0], current_index_data.index[-1])
+        ax.set_autoscale_on(False)
+
+        # 5. Stamp fresh multi-color metric tracking headers
+        label_start = "YTD ROI: "
+        label_value = f"{updated_ytd_roi:+.2f}%"
+
+        ax.text(
+            0.5,
+            1.03,
+            label_start,
+            color="black",
+            fontsize=12,
+            fontweight=GENERAL_FONT_WEIGHT,
+            fontstyle=GENERAL_FONT_STYLE,
+            fontname=GENERAL_FONTNAME,
+            ha="right",
+            transform=ax.transAxes,
+        )
+        ax.text(
+            0.5,
+            1.03,
+            label_value,
+            color=live_theme["color"],
+            fontsize=12,
+            fontweight=GENERAL_FONT_WEIGHT,
+            fontstyle=GENERAL_FONT_STYLE,
+            fontname=GENERAL_FONTNAME,
+            ha="left",
+            transform=ax.transAxes,
+        )
+
+        # 6. Re-apply standardized structural padding layouts
+        ax.set_xlabel(YEAR, fontsize=11, fontweight="bold", labelpad=8)
+        ax.set_ylabel(
+            "Index Value (Starts at 100)", fontsize=11, fontweight="bold", labelpad=10
+        )
+        ax.grid(True, linestyle="--", alpha=0.5)
+        ax.legend(loc="upper left", fontsize=11)
+
+        # 7. Restore active tracking tools and blitted crosshair canvas bindings
+        setup_crosshair_tool(ax)
+        active_pan_state = setup_right_click_pan(ax)
+        ax.crosshair = BlittedCrosshairWithOverlay(ax, pan_state=active_pan_state)
+        setup_status_bar_formatter(ax)
+        setup_scroll_zoom(ax)
+
+    except Exception as e:
+        ax.text(
+            0.5,
+            0.5,
+            f"Data Error: {str(e)}",
+            color="red",
+            ha="center",
+            transform=ax.transAxes,
+        )
+
+    # 8. Re-render control layout menu ribbons and flush active canvas pipeline
+    if hasattr(ax, "footer") and ax.footer:
+        ax.footer.render_ui()
+    fig.canvas.draw_idle()
+
+
 def plot_custom_index(plot_params):
     """
     Handles all figure creation, axis limits, grid styling,
     dynamic title strings, and multi-color subtitle rendering.
-    Expects a dictionary containing: theme, dims, start_date,
+    Expects a dictionary containing: dims, start_date,
     end_date, and tickers.
     """
-    # Unpack values from the dictionary parameter
     dims = plot_params["dims"]
     start_date = plot_params["start_date"]
     end_date = plot_params["end_date"]
@@ -83,126 +185,19 @@ def plot_custom_index(plot_params):
         ha="center",
     )
 
-    # -------------------------------------------------------------------------
-    # DYNAMIC REFRESH PIPELINE
-    # -------------------------------------------------------------------------
-    def handle_refresh():
-        """
-        Triggered dynamically on asset list changes. Re-fetches Yahoo Finance
-        data, builds a fresh normalized index matrix, and live calculates YTD ROI.
-        """
-        ax.clear()
-
-        if not tickers:
-            ax.set_title(
-                "No Assets Selected", color="red", fontsize=12, fontstyle="italic"
-            )
-            ax.grid(True, linestyle="--", alpha=0.5)
-            fig.canvas.draw_idle()
-            return
-
-        try:
-            # 1. RE-FETCH AND CALCULATE MARKET INDEX MATRIX LIVE
-            print(f"Updating data matrix for tickers: {tickers}...")
-            data = yf.download(tickers, start=start_date, end=end_date, progress=False)[
-                "Close"
-            ]
-            data = data.dropna(how="all")
-
-            # Core Data Calculations (Normalized baseline at 100)
-            normalized_data = data / data.bfill().iloc[0]
-            current_index_data = normalized_data.mean(axis=1) * 100
-
-            # 2. RUN TRUE LIVE YTD ROI FUNCTION & THEME EVALUATOR
-            updated_ytd_roi = calculate_ytd_roi(current_index_data)
-            live_theme = get_roi_theme(updated_ytd_roi)
-
-            # 3. Plot the updated dataset curve
-            ax.plot(
-                current_index_data,
-                color=CHART_INDEX_COLOR,
-                linewidth=2.5,
-                label=f"{INDEX_TITLE} ({live_theme['text']})",
-            )
-            ax.set_xlim(current_index_data.index[0], current_index_data.index[-1])
-            ax.set_autoscale_on(False)
-
-            # 4. DRAW DYNAMIC METRIC SUBTITLES
-            label_start = "YTD ROI: "
-            label_value = f"{updated_ytd_roi:+.2f}%"
-
-            ax.text(
-                0.5,
-                1.03,
-                label_start,
-                color="black",
-                fontsize=12,
-                fontweight=GENERAL_FONT_WEIGHT,
-                fontstyle=GENERAL_FONT_STYLE,
-                fontname=GENERAL_FONTNAME,
-                ha="right",
-                transform=ax.transAxes,
-            )
-            ax.text(
-                0.5,
-                1.03,
-                label_value,
-                color=live_theme["color"],
-                fontsize=12,
-                fontweight=GENERAL_FONT_WEIGHT,
-                fontstyle=GENERAL_FONT_STYLE,
-                fontname=GENERAL_FONTNAME,
-                ha="left",
-                transform=ax.transAxes,
-            )
-
-            # 5. Restore core layout configurations
-            ax.set_xlabel(YEAR, fontsize=11, fontweight="bold", labelpad=8)
-            ax.set_ylabel(
-                "Index Value (Starts at 100)",
-                fontsize=11,
-                fontweight="bold",
-                labelpad=10,
-            )
-            ax.grid(True, linestyle="--", alpha=0.5)
-            ax.legend(loc="upper left", fontsize=11)
-
-            # -------------------------------------------------------------------------
-            # FIXED: RESTORE INTERACTIVE CROSSHAIR AND TRACKING DISPATCHERS LIVE
-            # -------------------------------------------------------------------------
-            # We re-inject the event hooks on the clean axis state container
-            setup_crosshair_tool(ax)
-            active_pan_state = setup_right_click_pan(ax)
-            ax.crosshair = BlittedCrosshairWithOverlay(ax, pan_state=active_pan_state)
-            setup_status_bar_formatter(ax)
-            setup_scroll_zoom(ax)
-            # -------------------------------------------------------------------------
-
-        except Exception as e:
-            ax.text(
-                0.5,
-                0.5,
-                f"Data Error: {str(e)}",
-                color="red",
-                ha="center",
-                transform=ax.transAxes,
-            )
-
-        # 6. Re-draw control ribbon UI and update layout pipeline caches
-        ax.footer.render_ui()
-        fig.canvas.draw_idle()
-
-    # -------------------------------------------------------------------------
-    # INITIALIZE LAYOUT FRAMEWORK
-    # -------------------------------------------------------------------------
+    # 2. Adjust margins to create protected dead-zone at the bottom for footer elements
     plt.subplots_adjust(left=0.12, right=0.95, top=0.85, bottom=0.18)
 
-    # Instantiate footer class linking directly to the processing loop function
+    # 3. Instantiate footer widget referencing our clean separate function definition
     ax.footer = ComponentAssetFooter(
-        fig=fig, tickers=tickers, on_refresh_callback=handle_refresh
+        fig=fig,
+        tickers=tickers,
+        on_refresh_callback=lambda: refresh_index_chart(
+            ax, tickers, start_date, end_date
+        ),
     )
 
-    # Fire the calculation engine immediately to draw the initial view frame
-    handle_refresh()
+    # 4. Trigger the first render loop immediately to generate the initial baseline view frame
+    refresh_index_chart(ax, tickers, start_date, end_date)
 
     return ax
