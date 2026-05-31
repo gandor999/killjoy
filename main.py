@@ -1,5 +1,5 @@
 from util import get_chart_dimensions
-from charter import generate_custom_index_chart
+from chart.generate import generate_custom_index_chart
 
 dims = get_chart_dimensions()
 
