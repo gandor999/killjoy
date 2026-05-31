@@ -5,22 +5,74 @@ import matplotlib.pyplot as plt
 
 def setup_status_bar_formatter(ax):
     """
-    Overrides the default Matplotlib bottom toolbar coordinates
+    Overrides the default Matplotlib bottom toolbar coordinates 
     to display a clean date string in DD/MM/YY hh:mm:ss AM/PM format.
     """
-
     def format_coord(x, y):
         try:
-            # Convert the X-axis number back into a datetime object
             dt_obj = plt.matplotlib.dates.num2date(x)
-
-            # Format using %I for 12-hour clock and %p for AM/PM
-            date_str = dt_obj.strftime("%d/%m/%y %I:%M:%S %p")
+            date_str = dt_obj.strftime('%d/%m/%y %I:%M:%S %p')
             return f"x = {date_str}, y = {y:.2f}"
         except (ValueError, OverflowError):
             return f"x = {x:.2f}, y = {y:.2f}"
 
     ax.format_coord = format_coord
+
+
+def setup_crosshair_tool(ax):
+    """
+    Creates and attaches an interactive crosshair and data box 
+    tracking system that directly tracks the mouse coordinates.
+    """
+    # Create the crosshair line elements (hidden by default)
+    v_line = ax.axvline(color="gray", linestyle="--", linewidth=1, visible=False)
+    h_line = ax.axhline(color="gray", linestyle="--", linewidth=1, visible=False)
+
+    # Create a persistent text box in the upper-left corner of the plot area
+    pointer_text = ax.text(
+        0.125, 0.88, "",          # 0.125 aligns perfectly with the left edge of the chart
+        transform=plt.gcf().transFigure, # <--- Change transAxes to transFigure
+        fontsize=11, 
+        fontweight="bold",
+        bbox=dict(boxstyle="round,pad=0.5", fc="black", alpha=0.75),
+        color="white",
+        verticalalignment="bottom",     # Aligns upward from the baseline coordinate
+        zorder=5
+    )
+
+    def on_mouse_move(event):
+        if event.inaxes == ax and event.xdata is not None and event.ydata is not None:
+            x_mouse, y_mouse = event.xdata, event.ydata
+            
+            try:
+                mouse_dt = plt.matplotlib.dates.num2date(x_mouse)
+                date_str = mouse_dt.strftime('%d/%m/%y %I:%M:%S %p')
+                val_str = f"{y_mouse:.2f}"
+                
+                # Position crosshair lines exactly at the mouse position
+                v_line.set_xdata([x_mouse])
+                h_line.set_ydata([y_mouse])
+                v_line.set_visible(True)
+                h_line.set_visible(True)
+                
+                # Update the overlay text content
+                pointer_text.set_text(f"📍 Date: {date_str}\n📈 Index: {val_str}")
+                pointer_text.set_visible(True)
+                
+            except (ValueError, OverflowError):
+                v_line.set_visible(False)
+                h_line.set_visible(False)
+                pointer_text.set_visible(False)
+                
+            plt.gcf().canvas.draw_idle()
+        else:
+            if v_line.get_visible():
+                v_line.set_visible(False)
+                h_line.set_visible(False)
+                pointer_text.set_visible(False)
+                plt.gcf().canvas.draw_idle()
+
+    plt.gcf().canvas.mpl_connect("motion_notify_event", on_mouse_move)
 
 
 def calculate_ytd_roi(index_series):
@@ -65,6 +117,11 @@ def generate_custom_index_chart(
         label=f"Custom Basket Index ({theme['text']})",
     )
 
+    # CRITICAL FIX: Lock down the limits using your real timeline data index bounds
+    ax = plt.gca()
+    ax.set_xlim(custom_index.index[0], custom_index.index[-1])
+    ax.set_autoscale_on(False)  # Turn off auto-scale so 1970 never sneaks in
+
     # 1. Main Title (Large, bold, default font)
     plt.figtext(
         0.5,
@@ -96,8 +153,9 @@ def generate_custom_index_chart(
     plt.grid(True, linestyle="--", alpha=0.5)
     plt.legend(loc="upper left", fontsize=11)
 
-    # Apply the toolbar coordinate fix to the current axes object
-    setup_status_bar_formatter(plt.gca())
+    # Activate interactive crosshair and status bar updates together
+    setup_crosshair_tool(ax)
+    setup_status_bar_formatter(ax)
 
     print("Displaying chart with updated layout...")
     plt.show()
